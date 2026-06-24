@@ -31,7 +31,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
 
     // Room Adatbázis (ez menti az adataidat)
-    val room_version = "2.6.1"
+    val room_version = libs.versions.room.get()
     implementation("androidx.room:room-runtime:$room_version")
     implementation("androidx.room:room-ktx:$room_version")
     ksp("androidx.room:room-compiler:$room_version")

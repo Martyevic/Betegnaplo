@@ -21,7 +21,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.platform.LocalContext
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -29,6 +31,11 @@ import java.time.LocalTime
 import java.time.format.TextStyle
 import java.util.Locale
 import java.util.UUID
+import com.example.betegnapl.data.PatientRepository
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 // --- ADATMODELL ---
 data class Patient(
@@ -42,26 +49,35 @@ data class Patient(
 )
 
 // --- VIEWMODEL ---
-class PatientViewModel : ViewModel() {
-    private val _patients = mutableStateListOf<Patient>()
-    val patients: List<Patient> get() = _patients
+class PatientViewModel(
+    private val repository: PatientRepository,
+) : ViewModel() {
+    val patients: StateFlow<List<Patient>> = repository.observePatients()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun addPatient(name: String, room: String, illness: String, days: Set<DayOfWeek>, initialCount: Int) {
-        _patients.add(Patient(name = name, room = room, illness = illness, massageDays = days, massageCount = initialCount))
+        viewModelScope.launch {
+            repository.insert(
+                Patient(name = name, room = room, illness = illness, massageDays = days, massageCount = initialCount),
+            )
+        }
     }
 
     fun incrementMassage(patient: Patient) {
-        val index = _patients.indexOfFirst { it.id == patient.id }
-        if (index != -1) {
-            _patients[index] = _patients[index].copy(
-                massageCount = _patients[index].massageCount + 1,
-                lastMassageTime = LocalDateTime.now()
+        viewModelScope.launch {
+            repository.update(
+                patient.copy(
+                    massageCount = patient.massageCount + 1,
+                    lastMassageTime = LocalDateTime.now(),
+                ),
             )
         }
     }
 
     fun deletePatient(patient: Patient) {
-        _patients.removeIf { it.id == patient.id }
+        viewModelScope.launch {
+            repository.delete(patient)
+        }
     }
 
     fun getLogicalToday(): DayOfWeek {
@@ -93,7 +109,13 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppNavigation(viewModel: PatientViewModel = viewModel()) {
+fun AppNavigation(
+    viewModel: PatientViewModel = viewModel(
+        factory = PatientViewModelFactory(
+            (LocalContext.current.applicationContext as BetegnaplApplication).patientRepository,
+        ),
+    ),
+) {
     var showAllPatients by remember { mutableStateOf(false) }
     var showAddDialog by remember { mutableStateOf(false) }
     val todayName = LocalDate.now().dayOfWeek.getDisplayName(TextStyle.FULL, Locale("hu", "HU"))
@@ -136,8 +158,9 @@ fun AppNavigation(viewModel: PatientViewModel = viewModel()) {
 
 @Composable
 fun TodayPatientsScreen(viewModel: PatientViewModel) {
+    val patients by viewModel.patients.collectAsState()
     val today = viewModel.getLogicalToday()
-    val todayPatients = viewModel.patients.filter { it.massageDays.contains(today) }
+    val todayPatients = patients.filter { it.massageDays.contains(today) }
     LazyColumn(modifier = Modifier.padding(16.dp)) {
         items(todayPatients.sortedBy { viewModel.isMassagedToday(it) }) { patient ->
             PatientItem(patient, viewModel.isMassagedToday(patient), { viewModel.incrementMassage(patient) }, { viewModel.deletePatient(patient) })
@@ -147,8 +170,9 @@ fun TodayPatientsScreen(viewModel: PatientViewModel) {
 
 @Composable
 fun AllPatientsScreen(viewModel: PatientViewModel) {
+    val patients by viewModel.patients.collectAsState()
     LazyColumn(modifier = Modifier.padding(16.dp)) {
-        items(viewModel.patients) { patient ->
+        items(patients) { patient ->
             PatientItem(patient, false, {}, { viewModel.deletePatient(patient) }, true)
         }
     }
